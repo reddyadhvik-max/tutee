@@ -45,7 +45,8 @@
     <fieldset class="card topic-picker reveal">
       <legend>Topic</legend>
       <div class="pills" id="topicOptions"></div>
-      <label class="topic-custom">Or type any topic <input id="customTopic" type="text" placeholder="e.g. black holes" autocomplete="off"></label>
+      <label class="topic-custom" for="customTopic">Or type or say any topic</label>
+      <div class="topic-row"><input id="customTopic" type="text" placeholder="e.g. black holes" autocomplete="off"><button class="icon-btn" id="sayTopic" type="button" aria-label="Say a topic" aria-pressed="false"><svg><use href="#i-mic"/></svg></button></div>
     </fieldset>
     <div class="mode-cards" role="group" aria-label="Pick a mode">
       <button class="mode-card learn reveal" id="startLearn" type="button">

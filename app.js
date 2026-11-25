@@ -5,6 +5,7 @@ import { CONFIG } from "./config.js";
 import { TurnManager } from "./turn.js";
 import * as tts from "./tts.js";
 import { pickAsr } from "./asr/index.js";
+import { webSpeechSupported, createWebSpeech } from "./asr/webspeech.js";
 import { Learn } from "./modes/learn.js";
 import { Teach } from "./modes/teach.js";
 
@@ -206,6 +207,20 @@ async function resolveTopic(lang) {
   return t;
 }
 
+// Say a topic on the home screen: one Web Speech phrase in the picked language fills the box.
+function sayTopic() {
+  const b = $("#sayTopic");
+  if (!webSpeechSupported()) return toast("Speech input needs Chrome or Edge. Type the topic instead.");
+  if (b._asr) { b._asr.stop(); b._asr = null; b.setAttribute("aria-pressed", "false"); return; }
+  const lang = document.querySelector("input[name=lang]:checked")?.value || "en";
+  const done = () => { b._asr?.stop(); b._asr = null; b.setAttribute("aria-pressed", "false"); };
+  b._asr = createWebSpeech({ lang: LANGS[lang].asr,
+    onResult: (r) => { $("#customTopic").value = (r.final || r.interim).trim().replace(/[.?!।]$/, ""); if (r.final) done(); },
+    onError: () => { done(); toast("Mic is blocked. Type the topic instead."); } });
+  b.setAttribute("aria-pressed", "true"); b._asr.start();
+  setTimeout(() => { if (b._asr) done(); }, 8000);
+}
+
 // ---------- session ----------
 async function start(mode) {
   const lang = document.querySelector("input[name=lang]:checked").value;
@@ -323,6 +338,7 @@ document.querySelector("[data-open-settings]").onclick = openSettings;
 $("#typeInstead").onclick = () => $("#say").focus();
 if (typeof speechSynthesis !== "undefined") speechSynthesis.getVoices(); // voices load lazily
 $("#openSettings").onclick = openSettings;
+$("#sayTopic").onclick = sayTopic;
 $("#startLearn").onclick = () => start("learn");
 $("#startTeach").onclick = () => start("teach");
 $("#end").onclick = () => S.session && finish(S.session.card());
