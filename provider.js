@@ -3,7 +3,7 @@
 import { PHRASES, LANGS, PACK, mockTopic } from "./topics.js";
 import { CONFIG } from "./config.js";
 
-export const DEFAULTS = { provider: "mock", groqModel: "openai/gpt-oss-20b", geminiModel: "gemini-2.5-flash-lite", timeoutMs: 6000 };
+export const DEFAULTS = { provider: "mock", groqModel: "openai/gpt-oss-20b", geminiModel: "gemini-flash-lite-latest", timeoutMs: 6000 };
 
 // ---------- prompts ----------
 // The transcript goes to the model as is; it replies in whatever mix the student used (spec: Hinglish and mixed scripts).
@@ -109,7 +109,7 @@ export const providers = {
     if (!text) throw new ApiError("bad", `empty reply (finish: ${j?.choices?.[0]?.finish_reason})`);
     return text;
   },
-  // 2.5 Flash-Lite has thinking off by default. A blocked prompt returns no candidates; thought parts are skipped.
+  // gemini-flash-lite-latest (2.5 Flash-Lite retired for new keys, Nov 2026). A blocked prompt returns no candidates; thought parts are skipped.
   async gemini({ system, messages, temperature, maxTokens = 1500 }, cfg, signal) {
     const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel || DEFAULTS.geminiModel}:generateContent`, {
       signal, headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.geminiKey },

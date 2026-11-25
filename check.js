@@ -201,7 +201,7 @@ const ok = (name) => console.log("ok -", name);
   globalThis.fetch = async (url, init) => { seen = { url, body: JSON.parse(init.body), headers: init.headers }; return reply(200, { candidates: [{ content: { parts: [{ text: "thinking...", thought: true }, { text: '{"say":"Hmm, why?","move":"why"}' }] } }] })(); };
   cfg = { provider: "gemini", geminiKey: "g" };
   assert.equal((await ask("pip", ctx, cfg)).say, "Hmm, why?", "gemini happy path");
-  assert.ok(seen.url.includes("gemini-2.5-flash-lite:generateContent") && seen.headers["x-goog-api-key"] === "g" && seen.body.systemInstruction);
+  assert.ok(seen.url.includes("gemini-flash-lite-latest:generateContent") && seen.headers["x-goog-api-key"] === "g" && seen.body.systemInstruction);
   // 401 -> plain message, mock answers, stays mock until settings change
   let msgs = [];
   globalThis.fetch = reply(401, { error: { message: "Invalid API Key", type: "invalid_request_error" } });

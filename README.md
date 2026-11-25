@@ -37,7 +37,7 @@ These numbers were checked on 22 Nov 2026. Groq's console page is the final word
 | Speech to text | Web Speech API in the browser | free, no key, Chrome/Edge only |
 | Speech to text backup | Groq whisper-large-v3-turbo | 20 requests/min, 2,000/day, 7,200 audio seconds/hour |
 | Pip and the judge | Groq openai/gpt-oss-20b | 30 requests/min, 1,000/day, 8K tokens/min, 200K tokens/day |
-| Backup model | Gemini 2.5 Flash-Lite | free tier, no billing; limits shown per project in AI Studio |
+| Backup model | Gemini Flash-Lite (`gemini-flash-lite-latest`) | free tier, no billing; limits shown per project in AI Studio |
 | Pip's voice | the browser's speechSynthesis | free, voice depends on the device |
 | No key or no network | built-in mock | unlimited, runs offline |
 
