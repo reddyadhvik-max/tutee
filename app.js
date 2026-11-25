@@ -111,9 +111,11 @@ function bargeIn() {
 // ---------- turn handling ----------
 function onAsr(r) {
   S.resultAt = performance.now();
-  if (tts.speaking() && (r.final || r.interim).trim()) bargeIn(); // only reachable with headphones on
+  if (tts.speaking() && isCutIn(r.final || r.interim)) bargeIn(); // only reachable with headphones on
   S.turn.result(r);
 }
+// A cough or a lone "um" shouldn't stop Pip: cut in on 2+ words, or one clear stop word.
+const isCutIn = (t) => t.trim().split(/\s+/).length >= 2 || /^(wait|stop|sorry|hold|ruko|रुको|रुकिए|suno|सुनो)(?=\s|$)/i.test(t.trim());
 function onInterim(text) {
   $("#live").textContent = text;
   if (S.mode === "teach" && !S.busy) tryBuzz(text);
