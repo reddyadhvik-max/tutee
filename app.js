@@ -1,6 +1,7 @@
 // Tutee app glue: home screen, session wiring (ASR -> turn manager -> mode -> TTS), Clarity Card, settings.
 import { TOPICS, PHRASES, LANGS, mockTopic, localTopic } from "./topics.js";
-import { ask as rawAsk, isMock, DEFAULTS } from "./provider.js";
+import { ask as rawAsk, isMock, mockReason, testConnection, DEFAULTS } from "./provider.js";
+import { CONFIG } from "./config.js";
 import { TurnManager } from "./turn.js";
 import * as tts from "./tts.js";
 import { pickAsr } from "./asr/index.js";
@@ -18,7 +19,7 @@ if (new URLSearchParams(location.search).has("mute")) cfg.mute = true;
 
 // sid changes on every new/ended session so late async callbacks from an old session do nothing.
 const S = { sid: 0, mode: null, lang: "en", topic: null, session: null, asr: null, turn: null, waiter: null, queue: [], busy: false, resultAt: 0, last: null };
-const ask = (task, ctx) => rawAsk(task, ctx, cfg, toast);
+const ask = (task, ctx) => rawAsk(task, ctx, cfg, (msg) => { toast(msg); updateMockNotice(); });
 const P = () => PHRASES[S.lang];
 
 // ---------- small UI helpers ----------
@@ -64,12 +65,24 @@ function setMeter(v) {
   $("#meterFill").style.transform = `scaleX(${n / 100})`; countUp($("#meterNum"), n); $("#meter").setAttribute("aria-valuenow", n);
 }
 const STATUS = {
-  idle: "", thinking: "Pip is thinking…",
+  idle: "", thinking: `${CONFIG.persona} is thinking…`,
   listening: "Listening… talk any time, or type below",
-  speaking: "Pip is speaking — talk or press Space to cut in",
+  speaking: `${CONFIG.persona} is speaking — talk or press Space to cut in`,
 };
 function setState(s) { document.body.dataset.state = s; $("#status").textContent = STATUS[s]; }
-function updateMockNotice() { $("#mockNotice").hidden = !isMock(cfg); }
+const MOCK_WHY = {
+  nokey: `No API key, so ${CONFIG.persona} uses scripted replies.`,
+  offline: `You're offline, so ${CONFIG.persona} uses scripted replies until the network is back.`,
+  auth: `The provider rejected your key, so ${CONFIG.persona} uses scripted replies. Check the key in Settings.`,
+  rate: `Free limit reached, so ${CONFIG.persona} uses scripted replies for a minute.`,
+};
+function updateMockNotice() {
+  const why = mockReason(cfg);
+  $("#mockNotice").hidden = !why;
+  if (why) $("#mockWhy").textContent = MOCK_WHY[why];
+  if (why === "rate") setTimeout(updateMockNotice, Math.max(0, cfg.mockUntil - Date.now()) + 50);
+}
+addEventListener("online", updateMockNotice); addEventListener("offline", updateMockNotice);
 
 // ---------- mic ----------
 function micOn() { if (S.asr?.continuous && !cfg.holdOnly) S.asr.start(); }
@@ -154,12 +167,13 @@ async function drain() {
 const learnIo = {
   say: (text, kind) => say(text, kind, kind === "check" ? "check" : ""),
   progress: (i, n) => setMeter((i / n) * 100),
-  listen(ms) {
+  listen(ms, expectShort = false) {
     if (S.queue.length) return Promise.resolve(S.queue.shift());
     setState("listening"); micOn();
+    if (S.turn) S.turn.allowShort = expectShort;
     return new Promise((res) => {
       let t;
-      const finish = (v) => { S.waiter = null; clearTimeout(t); res(v); };
+      const finish = (v) => { S.waiter = null; clearTimeout(t); if (S.turn) S.turn.allowShort = false; res(v); };
       // Don't time out while the student is mid-sentence or holding the talk button.
       const arm = (d) => (t = setTimeout(() => (S.turn?.text || S.turn?.holding ? arm(400) : finish(null)), d));
       S.waiter = finish; arm(ms);
@@ -206,7 +220,7 @@ async function start(mode) {
   $("#chips").replaceChildren(...topic.jargon.map((t) => { const c = document.createElement("span"); c.className = "chip"; c.dataset.term = t.toLowerCase(); c.textContent = t; return c; }));
   micNote("");
   S.turn = new TurnManager({ interim: onInterim, turn: onTurn, garbled: onGarbled });
-  S.asr = pickAsr({ lang: LANGS[lang].asr, groqKey: cfg.groqKey, onResult: onAsr, onError: asrError });
+  S.asr = pickAsr({ lang: LANGS[lang].asr, groqKey: CONFIG.features.whisper ? cfg.groqKey : "", onResult: onAsr, onError: asrError });
   if (!S.asr) micNote("This browser has no speech recognition. Use Chrome or Edge (or add a Groq key for Whisper), or type below.");
   else if (!S.asr.continuous) micNote("Hold the talk button while you speak (Whisper mode).");
   show("session");
@@ -214,7 +228,7 @@ async function start(mode) {
     S.session = new Learn({ topic, lang, ask: (t, c) => thinking(ask(t, c)), io: learnIo });
     S.session.run().then((card) => { if (sid === S.sid) finish(card); });
   } else {
-    S.session = new Teach({ topic, lang, ask });
+    S.session = new Teach({ topic, lang, ask, judge: CONFIG.features.judge });
     await say(S.session.opening(), "opening");
   }
 }
@@ -242,6 +256,7 @@ function finish(card) {
 function openSettings() {
   for (const k of ["provider", "groqKey", "geminiKey"]) $("#" + k).value = cfg[k] || "";
   for (const k of ["headphones", "holdOnly", "mute"]) $("#" + k).checked = !!cfg[k];
+  $("#testResult").textContent = ""; $("#testResult").className = "test-result";
   $("#settings").classList.remove("closing");
   $("#settings").showModal();
 }
@@ -259,11 +274,47 @@ $("#settings").addEventListener("close", () => {
   for (const k of ["provider", "groqKey", "geminiKey"]) cfg[k] = $("#" + k).value.trim();
   for (const k of ["headphones", "holdOnly", "mute"]) cfg[k] = $("#" + k).checked;
   const { provider, groqKey, geminiKey, headphones, holdOnly, mute } = cfg;
+  cfg.mockUntil = 0; cfg.mockReason = ""; // a saved key gets a fresh chance after an auth or rate-limit failure
   store.set("tutee.cfg", JSON.stringify({ provider, groqKey, geminiKey, headphones, holdOnly, mute }));
   updateMockNotice(); toast(isMock(cfg) ? "Saved. Mock mode (no key for this provider)." : `Saved. Using ${cfg.provider}.`);
 });
 
+// Test connection: uses the values typed in the form, saved or not.
+$("#testConn").onclick = async () => {
+  const b = $("#testConn"), out = $("#testResult");
+  const draft = { ...cfg, provider: $("#provider").value, groqKey: $("#groqKey").value.trim(), geminiKey: $("#geminiKey").value.trim() };
+  b.disabled = true; out.className = "test-result"; out.textContent = "Testing…";
+  const r = await testConnection(draft);
+  b.disabled = false; out.className = `test-result ${r.ok ? "ok" : "bad"}`; out.textContent = r.message;
+};
+
+// ---------- config: name, persona, colours, features, default language ----------
+function applyConfig() {
+  document.title = CONFIG.appName;
+  $("#appName").textContent = CONFIG.appName; $("#tagline").textContent = CONFIG.tagline;
+  // The HTML is written with "Pip"; swap in the configured persona in text and labels.
+  if (CONFIG.persona !== "Pip") {
+    const re = /\bPip\b/g, w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) { const t = n.data.replace(re, CONFIG.persona); if (t !== n.data) n.data = t; }
+    document.querySelectorAll("[aria-label],[placeholder],[title]").forEach((el) => {
+      for (const a of ["aria-label", "placeholder", "title"]) if (el.hasAttribute(a)) el.setAttribute(a, el.getAttribute(a).replace(re, CONFIG.persona));
+    });
+  }
+  const vars = (o) => Object.entries(o || {}).map(([k, v]) => `${k}:${v}`).join(";");
+  const { light, dark } = CONFIG.theme || {};
+  if (vars(light) || vars(dark)) {
+    const st = document.createElement("style");
+    st.textContent = `:root{${vars(light)}} @media (prefers-color-scheme: dark){:root{${vars(dark)}}}`;
+    document.head.append(st);
+  }
+  $("#startLearn").hidden = !CONFIG.features.learn; $("#startTeach").hidden = !CONFIG.features.teach;
+  const r = document.querySelector(`input[name=lang][value="${CONFIG.defaultLang}"]`); if (r) r.checked = true;
+}
+
 // ---------- wiring ----------
+applyConfig();
+// Offline: the service worker caches the static files so mock mode works with no network. Skipped on file://.
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 renderTopics(); updateMockNotice(); show("home"); setState("idle");
 document.querySelectorAll("input[name=lang]").forEach((r) => r.addEventListener("change", renderTopics));
 document.querySelector("[data-open-settings]").onclick = openSettings;

@@ -20,6 +20,7 @@ export function decideTurn({ text, firstAt, lastAt, now, confidence = 0, silence
 // Glue around decideTurn. on: { interim(fullText), turn(text), garbled(text) }.
 export class TurnManager {
   constructor(on, clock = () => performance.now()) { this.on = on; this.clock = clock; this.reset(); }
+  // allowShort: set while Pip waits for an answer, so one quick word isn't dropped as noise.
   reset() { clearTimeout(this.timer); this.final = ""; this.interim = ""; this.firstAt = 0; this.lastAt = 0; this.conf = 0; this.holding = false; }
   get text() { return (this.final + " " + this.interim).trim(); }
   result({ final = "", interim = "", confidence = 0 }) {
@@ -33,7 +34,7 @@ export class TurnManager {
     if (!this.holding) this.timer = setTimeout(() => this.tick(), TURN.silenceMs);
   }
   tick(force = false) {
-    const d = decideTurn({ text: this.text, firstAt: this.firstAt, lastAt: this.lastAt, now: force ? Infinity : this.clock(), confidence: this.conf });
+    const d = decideTurn({ text: this.text, firstAt: this.firstAt, lastAt: this.lastAt, now: force ? Infinity : this.clock(), confidence: this.conf, minSpeechMs: this.allowShort ? 0 : TURN.minSpeechMs });
     if (d === "wait") { this.timer = setTimeout(() => this.tick(), 100); return; }
     const text = this.text;
     this.reset();

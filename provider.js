@@ -1,15 +1,18 @@
 // All model calls go through ask(task, ctx, cfg). Providers: groq | gemini | mock (no key, no network).
 // Tasks: pip (Teach move), answer (Learn cut-in), check (Learn check question), judge (rubric, temp 0), topic (outline + jargon).
-import { PHRASES, LANGS, mockTopic } from "./topics.js";
+import { PHRASES, LANGS, PACK, mockTopic } from "./topics.js";
+import { CONFIG } from "./config.js";
 
 export const DEFAULTS = { provider: "mock", groqModel: "openai/gpt-oss-20b", geminiModel: "gemini-2.5-flash-lite", timeoutMs: 6000 };
 
 // ---------- prompts ----------
-const langLine = (ctx) => `Reply in ${LANGS[ctx.lang || "en"].llm}. The transcript is raw speech, possibly mixed Hindi/English; take it as is.`;
+// The transcript goes to the model as is; it replies in whatever mix the student used (spec: Hinglish and mixed scripts).
+const langLine = (ctx) => `The student's words are raw speech-to-text, possibly mixed Hindi/English or with recognition slips; take them as is.
+Reply in the same language mix and script the student used. If unsure, use ${LANGS[ctx.lang || "en"].llm}. Spoken style: no markdown, no emoji, no lists.`;
 const outlineText = (ctx) => ctx.topic.outline.map((o, i) => `${i + 1}. ${o.idea}`).join("\n");
 
 const PROMPTS = {
-  pip: (ctx) => `You are Pip, a curious 10-year-old. The student is teaching you "${ctx.topic.title}" out loud.
+  pip: (ctx) => `You are ${CONFIG.persona}, ${CONFIG.learnerRole}. The student is teaching you "${ctx.topic.title}" out loud.
 Stay in character, never lecture, never give the answer. At most 2 short spoken sentences, no lists, no markdown.
 Make exactly ONE move:
 "flag" = point out one wrong or missing step (use the hidden outline), "why" = ask why, "example" = ask for a real-life example,
@@ -18,7 +21,7 @@ Hidden reference outline (never read it out):
 ${outlineText(ctx)}
 ${langLine(ctx)}
 Return only JSON: {"say": "...", "move": "flag|why|example|flaw|pop"}`,
-  answer: (ctx) => `You are Pip, a friendly tutor teaching "${ctx.topic.title}" by voice. You were explaining this part:
+  answer: (ctx) => `You are ${CONFIG.persona}, ${CONFIG.tutorRole} teaching "${ctx.topic.title}" by voice. You were explaining this part:
 "${ctx.chunk.explain}"
 The student cut in with a question. Answer it in at most 3 short spoken sentences, plain words. If they ask you to repeat or go slower, re-say that part more simply. Do not ask whether to continue.
 ${langLine(ctx)}
@@ -35,7 +38,7 @@ ${outlineText(ctx)}
 Jargon to watch: ${ctx.topic.jargon.join(", ")}
 Quote one short phrase of the student as evidence. gaps = outline ideas missing or wrong (short). vague = terms or claims used without explanation.
 Return only JSON: {"correct": n, "simple": n, "complete": n, "evidence": "...", "gaps": ["..."], "vague": ["..."]}`,
-  topic: (ctx) => `Make study material for the topic "${ctx.title}" for an Indian class 8-12 student. ${langLine(ctx)}
+  topic: (ctx) => `Make study material for the topic "${ctx.title}" for ${PACK.audience}. ${langLine(ctx)}
 Return only JSON: {"title": "...", "jargon": [6-8 key technical terms, lowercase, in the student's script],
 "outline": [exactly 5 objects in teaching order: {"idea": "one-line key idea", "explain": "2-3 plain spoken sentences",
 "alt": "the same idea explained another way, with an everyday analogy, 2 sentences", "check": "one quick question", "answer": ["2-4 keywords a right answer contains"]}]}`,
@@ -50,44 +53,120 @@ function messagesFor(task, ctx) {
 }
 const TEMP = { pip: 0.7, answer: 0.5, check: 0, judge: 0, topic: 0.4 };
 
+// ---------- errors: every failure becomes one ApiError kind with a plain message ----------
+// kind: auth | rate | timeout | offline | network | server | bad
+export class ApiError extends Error {
+  constructor(kind, detail = "", status = 0) { super(detail || kind); this.kind = kind; this.status = status; }
+}
+const NAMES = { groq: "Groq", gemini: "Gemini" };
+// test = true drops the "mock answered" half, for the Settings test button.
+export function plainError(e, provider, test = false) {
+  const p = NAMES[provider] || provider;
+  const [core, fallback] = ({
+    auth: [`${p} rejected the key. Check it in Settings.`, "Mock mode until you save a new key."],
+    rate: [`${p} free limit reached.`, "Mock mode for a minute, then it tries again."],
+    timeout: [`${p} took too long.`, "Mock answered this one."],
+    offline: ["You're offline.", "Mock mode until the network is back."],
+    network: [`Couldn't reach ${p}. Check your network.`, "Mock answered this one."],
+    server: [`${p} is having trouble (error ${e.status}).`, "Mock answered this one."],
+    bad: [`${p} sent a reply ${CONFIG.appName} couldn't read.`, "Mock answered this one."],
+  })[e.kind] || [`${p} failed.`, "Mock answered this one."];
+  return test ? core : `${core} ${fallback}`;
+}
+// Groq: {error:{message,type}}. Gemini: {error:{code,message,status}}; a bad Gemini key has come back as 400 "API key not valid".
+async function httpError(r) {
+  let body = {}; try { body = await r.json(); } catch {}
+  const msg = String(body?.error?.message || "");
+  const salvage = body?.error?.failed_generation; // Groq json_object mode: the text it couldn't validate
+  if (r.status === 401 || r.status === 403 || /api key/i.test(msg)) return new ApiError("auth", msg, r.status);
+  if (r.status === 429 || r.status === 498) return new ApiError("rate", msg, r.status);
+  if (salvage) return Object.assign(new ApiError("bad", msg, r.status), { salvage });
+  if (r.status >= 500) return new ApiError("server", msg, r.status);
+  return new ApiError("bad", msg, r.status);
+}
+async function post(url, init) {
+  let r;
+  try { r = await fetch(url, { method: "POST", ...init }); } catch (e) {
+    if (e.name === "AbortError") throw new ApiError("timeout");
+    throw new ApiError(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "network", e.message);
+  }
+  if (!r.ok) throw await httpError(r);
+  try { return await r.json(); } catch { throw new ApiError("bad", "response was not JSON"); }
+}
+
 // ---------- providers (add one = add one function returning the raw text) ----------
 export const providers = {
-  async groq({ system, messages, temperature }, cfg, signal) {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST", signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.groqKey}` },
-      body: JSON.stringify({ model: cfg.groqModel || DEFAULTS.groqModel, temperature, max_tokens: 1500, response_format: { type: "json_object" },
+  // OpenAI-compatible. gpt-oss is a reasoning model: low effort keeps replies fast, and reasoning tokens
+  // share max_completion_tokens with the answer, so the cap leaves room for both.
+  async groq({ system, messages, temperature, maxTokens = 1500 }, cfg, signal) {
+    const j = await post("https://api.groq.com/openai/v1/chat/completions", {
+      signal, headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.groqKey}` },
+      body: JSON.stringify({ model: cfg.groqModel || DEFAULTS.groqModel, temperature, max_completion_tokens: maxTokens,
+        reasoning_effort: "low", include_reasoning: false, response_format: { type: "json_object" },
         messages: [{ role: "system", content: system }, ...messages] }),
     });
-    if (!r.ok) throw new Error(`groq ${r.status}`);
-    return (await r.json()).choices[0].message.content;
+    const text = j?.choices?.[0]?.message?.content;
+    if (!text) throw new ApiError("bad", `empty reply (finish: ${j?.choices?.[0]?.finish_reason})`);
+    return text;
   },
-  async gemini({ system, messages, temperature }, cfg, signal) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel || DEFAULTS.geminiModel}:generateContent`, {
-      method: "POST", signal,
-      headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.geminiKey },
+  // 2.5 Flash-Lite has thinking off by default. A blocked prompt returns no candidates; thought parts are skipped.
+  async gemini({ system, messages, temperature, maxTokens = 1500 }, cfg, signal) {
+    const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${cfg.geminiModel || DEFAULTS.geminiModel}:generateContent`, {
+      signal, headers: { "Content-Type": "application/json", "x-goog-api-key": cfg.geminiKey },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] },
         contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
-        generationConfig: { responseMimeType: "application/json", temperature } }),
+        generationConfig: { responseMimeType: "application/json", temperature, maxOutputTokens: maxTokens } }),
     });
-    if (!r.ok) throw new Error(`gemini ${r.status}`);
-    return (await r.json()).candidates[0].content.parts[0].text;
+    if (j?.promptFeedback?.blockReason) throw new ApiError("bad", `blocked: ${j.promptFeedback.blockReason}`);
+    const c = j?.candidates?.[0];
+    const text = (c?.content?.parts || []).filter((p) => !p.thought && p.text).map((p) => p.text).join("");
+    if (!text) throw new ApiError("bad", `empty reply (finish: ${c?.finishReason})`);
+    return text;
   },
 };
 
 export const keyFor = (cfg) => (cfg.provider === "groq" ? cfg.groqKey : cfg.provider === "gemini" ? cfg.geminiKey : "");
-export const isMock = (cfg) => !providers[cfg.provider] || !keyFor(cfg);
+const offline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+// cfg.mockUntil / cfg.mockReason are set after an auth (until settings change) or rate-limit (60 s) failure.
+export const isMock = (cfg) => !providers[cfg.provider] || !keyFor(cfg) || offline() || Date.now() < (cfg.mockUntil || 0);
+export function mockReason(cfg) {
+  if (!providers[cfg.provider] || !keyFor(cfg)) return "nokey";
+  if (offline()) return "offline";
+  return Date.now() < (cfg.mockUntil || 0) ? cfg.mockReason : "";
+}
 
+// onFallback(message, kind) is called whenever mock had to stand in for a real call.
 export async function ask(task, ctx, cfg = DEFAULTS, onFallback = () => {}) {
   if (isMock(cfg)) return MOCK[task](ctx);
   const ctl = new AbortController();
   const to = setTimeout(() => ctl.abort(), task === "topic" ? 20000 : cfg.timeoutMs || DEFAULTS.timeoutMs);
   try {
-    const raw = await providers[cfg.provider]({ system: PROMPTS[task](ctx), messages: messagesFor(task, ctx), temperature: TEMP[task] }, cfg, ctl.signal);
-    return CLEAN[task](parseJSON(raw), ctx);
+    let raw;
+    try { raw = await providers[cfg.provider]({ system: PROMPTS[task](ctx), messages: messagesFor(task, ctx), temperature: TEMP[task] }, cfg, ctl.signal); }
+    catch (e) { if (!e.salvage) throw e; raw = e.salvage; }
+    try { return CLEAN[task](parseJSON(raw), ctx); } catch (e) { throw new ApiError("bad", e.message); }
   } catch (e) {
-    onFallback(`${cfg.provider} ${e.name === "AbortError" ? "timed out" : "failed"} (${task}), mock answered`);
+    const err = e instanceof ApiError ? e : new ApiError(e.name === "AbortError" ? "timeout" : "bad", e.message);
+    if (err.kind === "auth") Object.assign(cfg, { mockUntil: Infinity, mockReason: "auth" });
+    if (err.kind === "rate") Object.assign(cfg, { mockUntil: Date.now() + 60000, mockReason: "rate" });
+    onFallback(plainError(err, cfg.provider), err.kind);
     return MOCK[task](ctx);
+  } finally { clearTimeout(to); }
+}
+
+// Settings "Test connection": one tiny call, no fallback. Resolves { ok, message }.
+export async function testConnection(cfg) {
+  if (!providers[cfg.provider]) return { ok: true, message: "Mock mode needs no connection. Pick Groq or Gemini to test a key." };
+  if (!keyFor(cfg)) return { ok: false, message: `Paste your ${NAMES[cfg.provider]} key first.` };
+  const ctl = new AbortController(), t0 = Date.now();
+  const to = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const raw = await providers[cfg.provider]({ system: 'Reply with only this JSON: {"ok": true}', messages: [{ role: "user", content: "ping" }], temperature: 0, maxTokens: 300 }, cfg, ctl.signal);
+    parseJSON(raw);
+    return { ok: true, message: `Connected to ${NAMES[cfg.provider]} in ${Date.now() - t0} ms.` };
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(e.name === "AbortError" ? "timeout" : "bad", e.message);
+    return { ok: false, kind: err.kind, message: plainError(err, cfg.provider, true) + (err.message && err.message !== err.kind ? ` (${err.message.slice(0, 120)})` : "") };
   } finally { clearTimeout(to); }
 }
 

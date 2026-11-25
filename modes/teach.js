@@ -1,13 +1,14 @@
 // Teach mode: student explains, Pip listens. Jargon buzz on interim text; one Pip move per turn; judge moves the meter.
 import { findUnexplained } from "../jargon.js";
 import { PHRASES } from "../topics.js";
-import { meterFrom } from "../provider.js";
+import { meterFrom, MOCK } from "../provider.js";
 import { clarityCard } from "./card.js";
 
 export class Teach {
   // ask(task, ctx) is provider.ask bound to the current settings.
-  constructor({ topic, lang = "en", ask }) {
-    Object.assign(this, { topic, lang, ask, p: PHRASES[lang] || PHRASES.en });
+  // judge = false scores locally (keyword coverage) instead of a second LLM call per turn.
+  constructor({ topic, lang = "en", ask, judge = true }) {
+    Object.assign(this, { topic, lang, ask, useJudge: judge, p: PHRASES[lang] || PHRASES.en });
     this.turns = []; this.history = []; this.handled = new Set(); this.vague = []; this.judge = null; this.meter = 0; this.moves = [];
   }
   opening() { return this.p.teachMe; }
@@ -26,7 +27,7 @@ export class Teach {
     this.turns.push(text.trim());
     const ctx = { topic: this.topic, lang: this.lang, text, turns: [...this.turns], history: this.history, vague: [...this.vague] };
     const b = this.buzz(text, true); // a term left hanging at the very end of the turn
-    const [pip, judge] = await Promise.all([b ? { say: b.say, move: "buzz", term: b.term } : this.ask("pip", ctx), this.ask("judge", ctx)]);
+    const [pip, judge] = await Promise.all([b ? { say: b.say, move: "buzz", term: b.term } : this.ask("pip", ctx), this.useJudge ? this.ask("judge", ctx) : MOCK.judge(ctx)]);
     pip.say = firstSentences(pip.say, 2);
     this.history.push({ role: "user", content: text }, { role: "assistant", content: pip.say });
     this.history = this.history.slice(-12); // shortcut: last 6 turns only, keeps free-tier tokens low

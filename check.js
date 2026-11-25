@@ -1,4 +1,4 @@
-// Self-checks, no deps. Run: node phase-2/app/check.js
+// Self-checks, no deps. Run: node check.js
 import assert from "node:assert/strict";
 import { findUnexplained } from "./jargon.js";
 import { decideTurn, isGarbled } from "./turn.js";
@@ -41,6 +41,15 @@ const ok = (name) => console.log("ok -", name);
   assert.equal(decideTurn({ ...base, now: 9000, confidence: 0 }), "end", "unknown confidence is not garbled");
   assert.equal(decideTurn({ ...base, now: Infinity }), "end", "hold-to-talk release forces the end");
   assert.ok(isGarbled("?? ..")); assert.ok(!isGarbled("हाँ ठीक है"));
+  assert.equal(decideTurn({ text: "oxygen", firstAt: 0, lastAt: 300, now: 2000, minSpeechMs: 0 }), "end", "short answer kept when Pip asked");
+  const { TurnManager } = await import("./turn.js");
+  let now = 0, got = [];
+  const tm = new TurnManager({ turn: (t) => got.push(t) }, () => now);
+  tm.result({ final: "yes" }); now = 200; tm.result({ final: "" }); now = 5000; tm.tick();
+  assert.deepEqual(got, [], "one short word dropped as noise by default");
+  tm.allowShort = true; now = 0; tm.result({ final: "yes" }); now = 5000; tm.tick();
+  assert.deepEqual(got, ["yes"], "allowShort keeps it");
+  tm.reset();
   ok("turn-end timing");
 }
 
@@ -68,10 +77,10 @@ const ok = (name) => console.log("ok -", name);
   let note = "";
   providers.groq = async () => "I think the score is about seven";
   const j = await ask("judge", ctx, cfg, (m) => (note = m));
-  assert.ok(note.includes("failed") && typeof j.correct === "number", "malformed -> mock judge + toast");
+  assert.ok(note.includes("couldn't read") && typeof j.correct === "number", "malformed -> mock judge + toast");
   providers.groq = (_, __, signal) => new Promise((_, rej) => signal.addEventListener("abort", () => rej(Object.assign(new Error("x"), { name: "AbortError" }))));
   await ask("pip", ctx, cfg, (m) => (note = m));
-  assert.ok(note.includes("timed out"), "timeout -> mock");
+  assert.ok(note.includes("took too long"), "timeout -> mock");
   providers.groq = async () => '```json\n{"correct": 7, "simple": 8, "complete": 3, "evidence": "make food", "gaps": ["stomata"], "vague": []}\n```';
   assert.equal((await ask("judge", ctx, cfg)).complete, 3, "good output is used");
   providers.groq = real;
@@ -173,5 +182,106 @@ const ok = (name) => console.log("ok -", name);
   assert.equal(findUnexplained("क्लोरोफिल मतलब हरा रंग जो धूप पकड़ता है", hi.jargon, new Set()), null, "Hindi explain cue");
   assert.equal(localTopic("photosynthesis", "en").title, "Photosynthesis");
   ok("topic languages");
+}
+
+// ---- real-API error handling: fetch is stubbed, no network ----
+{
+  const { testConnection, mockReason } = await import("./provider.js");
+  const realFetch = globalThis.fetch;
+  const topic = TOPICS.photosynthesis;
+  const ctx = { topic, lang: "en", text: "plants make food from light", turns: ["plants make food from light"], vague: [] };
+  const reply = (status, body) => async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  let seen = null;
+  globalThis.fetch = async (url, init) => { seen = { url, body: JSON.parse(init.body), headers: init.headers }; return reply(200, { choices: [{ message: { content: '{"say":"Why though?","move":"why"}' } }] })(); };
+  let cfg = { provider: "groq", groqKey: "k" };
+  assert.equal((await ask("pip", ctx, cfg)).say, "Why though?", "groq happy path");
+  assert.equal(seen.body.reasoning_effort, "low"); assert.ok(seen.body.max_completion_tokens && seen.body.response_format.type === "json_object");
+  assert.ok(seen.body.messages[0].content.includes("You are Pip") && seen.body.messages[0].content.includes("same language mix"), "persona + language-mix line in prompt");
+  // Gemini happy path, thought parts skipped
+  globalThis.fetch = async (url, init) => { seen = { url, body: JSON.parse(init.body), headers: init.headers }; return reply(200, { candidates: [{ content: { parts: [{ text: "thinking...", thought: true }, { text: '{"say":"Hmm, why?","move":"why"}' }] } }] })(); };
+  cfg = { provider: "gemini", geminiKey: "g" };
+  assert.equal((await ask("pip", ctx, cfg)).say, "Hmm, why?", "gemini happy path");
+  assert.ok(seen.url.includes("gemini-2.5-flash-lite:generateContent") && seen.headers["x-goog-api-key"] === "g" && seen.body.systemInstruction);
+  // 401 -> plain message, mock answers, stays mock until settings change
+  let msgs = [];
+  globalThis.fetch = reply(401, { error: { message: "Invalid API Key", type: "invalid_request_error" } });
+  cfg = { provider: "groq", groqKey: "bad" };
+  const r401 = await ask("pip", ctx, cfg, (m, k) => msgs.push([m, k]));
+  assert.ok(r401.say && msgs[0][1] === "auth" && msgs[0][0].includes("rejected the key"), "401 -> auth message + mock");
+  assert.ok(isMock(cfg) && mockReason(cfg) === "auth", "stays mock after a bad key");
+  // Gemini bad key arrives as 400 "API key not valid"
+  globalThis.fetch = reply(400, { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } });
+  msgs = []; cfg = { provider: "gemini", geminiKey: "bad" };
+  await ask("judge", ctx, cfg, (m, k) => msgs.push([m, k]));
+  assert.equal(msgs[0][1], "auth", "gemini 400 bad key -> auth");
+  // 429 -> rate, mock for ~60 s
+  globalThis.fetch = reply(429, { error: { message: "Rate limit reached" } });
+  msgs = []; cfg = { provider: "groq", groqKey: "k" };
+  await ask("judge", ctx, cfg, (m, k) => msgs.push([m, k]));
+  assert.ok(msgs[0][1] === "rate" && msgs[0][0].includes("free limit") && cfg.mockUntil > Date.now() + 50000 && mockReason(cfg) === "rate");
+  // 5xx, network down, blocked prompt, Groq json_validate_failed salvage
+  for (const [f, kind] of [
+    [reply(503, { error: { message: "busy" } }), "server"],
+    [async () => { throw new TypeError("Failed to fetch"); }, "network"],
+    [reply(200, { promptFeedback: { blockReason: "SAFETY" } }), "bad"],
+    [reply(200, { candidates: [{ finishReason: "MAX_TOKENS", content: {} }] }), "bad"],
+  ]) {
+    globalThis.fetch = f; msgs = [];
+    await ask("pip", ctx, { provider: "gemini", geminiKey: "g" }, (m, k) => msgs.push(k));
+    assert.equal(msgs[0], kind, `-> ${kind}`);
+  }
+  globalThis.fetch = reply(400, { error: { message: "json_validate_failed", failed_generation: 'Sure: {"say":"Salvaged!","move":"pop"}' } });
+  assert.equal((await ask("pip", ctx, { provider: "groq", groqKey: "k" })).say, "Salvaged!", "failed_generation is salvaged");
+  // Test connection
+  globalThis.fetch = reply(200, { choices: [{ message: { content: '{"ok": true}' } }] });
+  assert.ok((await testConnection({ provider: "groq", groqKey: "k" })).ok, "test ok");
+  globalThis.fetch = reply(401, { error: { message: "Invalid API Key" } });
+  const t401 = await testConnection({ provider: "groq", groqKey: "k" });
+  assert.ok(!t401.ok && t401.kind === "auth" && !t401.message.includes("Mock"), "test 401 is plain");
+  assert.ok(!(await testConnection({ provider: "gemini", geminiKey: "" })).ok, "test with no key");
+  assert.ok((await testConnection({ provider: "mock" })).ok, "mock needs no test");
+  globalThis.fetch = realFetch;
+  ok("API error handling + test connection");
+}
+
+// ---- config + topic packs ----
+{
+  const { CONFIG } = await import("./config.js");
+  const { validatePack, PACK } = await import("./topics.js");
+  for (const k of ["appName", "tagline", "persona", "defaultLang", "features", "theme", "pack"]) assert.ok(k in CONFIG, `config.${k}`);
+  for (const f of ["learn", "teach", "judge", "whisper"]) assert.equal(typeof CONFIG.features[f], "boolean", `features.${f}`);
+  assert.equal(PACK, CONFIG.pack);
+  const { readdirSync } = await import("node:fs");
+  for (const f of readdirSync(new URL("./topics/", import.meta.url)).filter((f) => f.endsWith(".js"))) {
+    const p = (await import(`./topics/${f}`)).default;
+    validatePack(p);
+    for (const [k, t] of Object.entries(p.topics)) for (const lang of ["en", "hi", "hinglish"]) {
+      const lt = { ...t, ...(p.i18n?.[k]?.[lang] || {}) };
+      assert.ok(lt.outline.length >= 3 && lt.jargon.length, `${f}:${k}/${lang} usable (falls back to English)`);
+    }
+  }
+  assert.throws(() => validatePack({ id: "x", name: "X", audience: "y", topics: { a: { title: "A", jargon: ["b"], outline: [{ idea: "i" }] } } }), /3\+ outline/);
+  assert.throws(() => validatePack({ id: "x", name: "X", audience: "y", topics: {} }), /at least one topic/);
+  // judge flag off: no judge call is made, the meter still moves
+  const calls = [];
+  const t = new Teach({ topic: TOPICS.photosynthesis, ask: async (task, c) => (calls.push(task), MOCK[task](c)), judge: false });
+  const r = await t.turn("Plants make their own food using light water and carbon dioxide from the air.");
+  assert.ok(!calls.includes("judge") && r.meter > 0, "judge:false scores locally");
+  ok("config + topic packs");
+}
+
+// ---- service worker never caches API calls ----
+{
+  const { readFileSync, existsSync } = await import("node:fs");
+  const sw = readFileSync(new URL("./sw.js", import.meta.url), "utf8");
+  assert.ok(/method !== "GET" \|\| u\.origin !== location\.origin\) return/.test(sw), "sw skips non-GET and cross-origin");
+  for (const f of sw.match(/FILES = \[([\s\S]*?)\]/)[1].match(/"([^"]+)"/g).map((x) => x.slice(1, -1)).filter((f) => f !== "./"))
+    assert.ok(existsSync(new URL("./" + f, import.meta.url)), `sw caches existing file ${f}`);
+  const { execSync } = await import("node:child_process");
+  const jsFiles = execSync("git ls-files --cached --others --exclude-standard '*.js'", { cwd: new URL(".", import.meta.url) }).toString().split("\n").filter((f) => f && !["sw.js", "check.js"].includes(f));
+  for (const f of jsFiles) assert.ok(sw.includes(`"${f}"`), `sw.js FILES lists ${f} (else it breaks offline)`);
+  const manifest = JSON.parse(readFileSync(new URL("./manifest.webmanifest", import.meta.url), "utf8"));
+  assert.ok(manifest.name && manifest.icons.length && manifest.start_url);
+  ok("offline files");
 }
 console.log("all checks passed");

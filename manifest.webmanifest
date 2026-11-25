@@ -1,0 +1,11 @@
+{
+  "name": "Tutee",
+  "short_name": "Tutee",
+  "description": "Learn out loud with Pip, a voice study partner.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F5F7FA",
+  "theme_color": "#0F766E",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

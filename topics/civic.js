@@ -1,0 +1,35 @@
+// Example topic pack for a civic-themed event. English only: other languages fall back to these lines,
+// and a real key lets the model reply in the student's language mix anyway. Swap it in via config.js.
+export default {
+  id: "civic",
+  name: "Civic basics",
+  audience: "a first-time voter in India",
+  topics: {
+    "how voting works": {
+      title: "How voting works",
+      jargon: ["constituency", "evm", "vvpat", "electoral roll", "nota"],
+      outline: [
+        { idea: "Every citizen aged 18 or more can vote once their name is on the electoral roll.",
+          explain: "In India, every citizen who is 18 or older can vote. First your name must be on the voter list for your area.",
+          alt: "Think of the voter list as a guest list. If your name isn't on it, you can't get in on voting day.",
+          check: "What two things do you need before you can vote?", answer: ["18", "list", "roll", "register"] },
+        { idea: "The country is split into constituencies, and each one elects one representative.",
+          explain: "The country is divided into areas called constituencies. Each area picks one person to represent it.",
+          alt: "It's like a school where every class elects its own monitor.",
+          check: "How many representatives does one constituency elect?", answer: ["one", "1", "single"] },
+        { idea: "At the booth, your ID is checked and your finger is inked.",
+          explain: "At the polling booth an officer checks your ID and your name. Then they put ink on your finger so nobody votes twice.",
+          alt: "The ink is like a stamp at a fair: it shows you've already had your turn.",
+          check: "Why is ink put on a voter's finger?", answer: ["twice", "again", "once"] },
+        { idea: "You vote on an EVM, and the VVPAT slip lets you check your vote.",
+          explain: "You press a button next to your candidate on the voting machine. A small printer shows a slip for a few seconds so you can see your vote went to the right person.",
+          alt: "It's like a shop receipt you glance at to make sure the bill is right.",
+          check: "What does the VVPAT slip let you do?", answer: ["check", "verify", "see"] },
+        { idea: "NOTA lets you reject every candidate; the person with the most votes wins.",
+          explain: "If you don't like any candidate, you can press NOTA, which means none of the above. The candidate with the most votes in the area wins.",
+          alt: "NOTA is like saying none of these dishes on the menu, thanks.",
+          check: "Who wins in a constituency?", answer: ["most", "highest", "votes"] },
+      ],
+    },
+  },
+};

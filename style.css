@@ -186,3 +186,10 @@ body[data-state=speaking] .eq { display:inline-flex; }
   @keyframes msgIn { from { opacity:0; } }
   @keyframes pulseFade { 0%,100% { opacity:.2; } 50% { opacity:.8; } }
 }
+
+/* ---------- settings: test connection ---------- */
+.test-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.test-row .link-btn { padding-left:0; }
+.test-result { margin:0; font-size:14px; color:var(--muted); flex:1 1 200px; }
+.test-result.ok { color:var(--accent); }
+.test-result.bad { color:var(--err); }

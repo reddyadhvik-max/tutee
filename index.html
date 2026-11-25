@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Tutee. Run: cd phase-2/app && python3 -m http.server 8767, open http://localhost:8767 in Chrome or Edge.
+<!-- Tutee. Run: python3 -m http.server 8767 in this folder, open http://localhost:8767 in Chrome or Edge.
      No key = mock Pip. Free keys go in Settings (stored in this browser only). See README.md. -->
 <html lang="en">
 <head>
@@ -7,6 +7,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Tutee</title>
+<meta name="theme-color" content="#0F766E">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-view="home" data-state="idle">
@@ -22,10 +25,10 @@
 </svg>
 
 <header class="topbar">
-  <h1 class="brand"><span class="logo" aria-hidden="true"><svg><use href="#i-mic"/></svg></span>Tutee <small>learn out loud with Pip</small></h1>
+  <h1 class="brand"><span class="logo" aria-hidden="true"><svg><use href="#i-mic"/></svg></span><span id="appName">Tutee</span> <small id="tagline">learn out loud with Pip</small></h1>
   <button class="icon-btn" id="openSettings" type="button" aria-label="Settings"><svg><use href="#i-gear"/></svg><span>Settings</span></button>
 </header>
-<p class="mock-notice" id="mockNotice" hidden><b>Mock mode.</b> No API key, so Pip uses scripted replies. <button class="link-btn" type="button" data-open-settings>Add a free key</button></p>
+<p class="mock-notice" id="mockNotice" hidden><b>Mock mode.</b> <span id="mockWhy">No API key, so Pip uses scripted replies.</span> <button class="link-btn" type="button" data-open-settings>Add a free key</button></p>
 
 <main>
   <!-- Home -->
@@ -115,6 +118,7 @@
     <label class="check"><input id="headphones" type="checkbox"> Headphones: talk over Pip to cut in</label>
     <label class="check"><input id="holdOnly" type="checkbox"> Noisy room: only listen while I hold the button</label>
     <label class="check"><input id="mute" type="checkbox"> Mute Pip's voice (text only)</label>
+    <div class="test-row"><button class="link-btn" id="testConn" type="button">Test connection</button><p class="test-result" id="testResult" role="status" aria-live="polite"></p></div>
     <p class="settings-note">Keys stay in this browser (localStorage). They are only sent to the provider you pick.</p>
     <button class="primary save-btn" value="save">Save</button>
   </form>

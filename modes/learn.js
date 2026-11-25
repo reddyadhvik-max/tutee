@@ -1,5 +1,6 @@
 // Learn mode: Pip explains in 2-3 sentence chunks, pauses ~2 s, takes cut-in questions, asks a check every 3 chunks.
-// io: { say(text, kind) -> Promise<bool finished (false = cut in)>, listen(ms) -> Promise<string|null>, progress(i, n) }
+// io: { say(text, kind) -> Promise<bool finished (false = cut in)>, listen(ms, expectShort) -> Promise<string|null>, progress(i, n) }
+// expectShort: Pip just asked something, so a one-word reply ("yes", "oxygen") is a real answer, not noise.
 import { PHRASES } from "../topics.js";
 import { clarityCard } from "./card.js";
 
@@ -51,7 +52,7 @@ export class Learn {
       const r = await this.ask("answer", { topic: this.topic, lang: this.lang, chunk: this.topic.outline[this.idx], text: q });
       if (!(await this.say(r.say, "answer"))) { q = await this.io.listen(LEARN.questionMs); continue; }
       await this.say(this.p.carryOn, "carryOn");
-      const reply = await this.io.listen(LEARN.carryOnMs);
+      const reply = await this.io.listen(LEARN.carryOnMs, true);
       if (!reply || YES.test(reply.trim())) return;
       q = NO.test(reply.trim()) && reply.trim().split(/\s+/).length <= 2 ? await this.io.listen(LEARN.questionMs) : reply;
     }
@@ -59,7 +60,7 @@ export class Learn {
 
   async check(c) {
     await this.say(`${this.p.checkIntro} ${c.check}`, "check");
-    const a = await this.io.listen(LEARN.checkMs);
+    const a = await this.io.listen(LEARN.checkMs, true);
     if (this.stopped) return;
     if (!a) { this.checks.push({ q: c.check, idx: this.idx, correct: false }); await this.say(this.p.moveOn, "moveOn"); return; }
     const r = await this.ask("check", { topic: this.topic, lang: this.lang, chunk: c, text: a });
