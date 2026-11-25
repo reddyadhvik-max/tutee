@@ -1,0 +1,125 @@
+<!doctype html>
+<!-- Tutee. Run: cd phase-2/app && python3 -m http.server 8767, open http://localhost:8767 in Chrome or Edge.
+     No key = mock Pip. Free keys go in Settings (stored in this browser only). See README.md. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Tutee</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-view="home" data-state="idle">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm6-3a6 6 0 0 1-12 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15ZM4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chalk" viewBox="0 0 24 24"><path d="M3 4h18v12H3zM8 20h8M12 16v4M7 9l3 3 4-5 3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v6M12 16.5v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="topbar">
+  <h1 class="brand"><span class="logo" aria-hidden="true"><svg><use href="#i-mic"/></svg></span>Tutee <small>learn out loud with Pip</small></h1>
+  <button class="icon-btn" id="openSettings" type="button" aria-label="Settings"><svg><use href="#i-gear"/></svg><span>Settings</span></button>
+</header>
+<p class="mock-notice" id="mockNotice" hidden><b>Mock mode.</b> No API key, so Pip uses scripted replies. <button class="link-btn" type="button" data-open-settings>Add a free key</button></p>
+
+<main>
+  <!-- Home -->
+  <section class="view home" id="home" aria-labelledby="homeTitle">
+    <h2 id="homeTitle" class="hero reveal">What are we studying?</h2>
+    <fieldset class="card lang-picker reveal">
+      <legend>Language</legend>
+      <div class="pills">
+        <label class="pill"><input type="radio" name="lang" value="en" checked> English</label>
+        <label class="pill"><input type="radio" name="lang" value="hi"> हिन्दी</label>
+        <label class="pill"><input type="radio" name="lang" value="hinglish"> Hinglish</label>
+      </div>
+    </fieldset>
+    <fieldset class="card topic-picker reveal">
+      <legend>Topic</legend>
+      <div class="pills" id="topicOptions"></div>
+      <label class="topic-custom">Or type any topic <input id="customTopic" type="text" placeholder="e.g. black holes" autocomplete="off"></label>
+    </fieldset>
+    <div class="mode-cards" role="group" aria-label="Pick a mode">
+      <button class="mode-card learn reveal" id="startLearn" type="button">
+        <span class="mode-icon" aria-hidden="true"><svg><use href="#i-book"/></svg></span>
+        <b>Learn</b><span class="mode-line">Pip teaches you, cut in any time</span>
+      </button>
+      <button class="mode-card teach reveal" id="startTeach" type="button">
+        <span class="mode-icon" aria-hidden="true"><svg><use href="#i-chalk"/></svg></span>
+        <b>Teach</b><span class="mode-line">You teach Pip, it catches your mistakes</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Session (Learn or Teach) -->
+  <section class="view session" id="session" hidden aria-labelledby="sessionTitle">
+    <div class="card session-head reveal">
+      <h2 id="sessionTitle" class="view-title"></h2>
+      <div class="state-bar">
+        <span class="mic-ring" aria-hidden="true"><svg><use href="#i-mic"/></svg></span>
+        <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <p class="status" id="status" aria-live="polite"></p>
+      </div>
+      <div class="meter-row"><b id="meterLabel">Understanding</b><span><span id="meterNum" class="num big">0</span><span class="num">/100</span></span></div>
+      <div class="meter" role="progressbar" aria-labelledby="meterLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="meter"><div class="meter-fill" id="meterFill"></div></div>
+      <p class="latency-line"><span id="latency" class="num latency">no replies yet</span></p>
+      <p class="judge-line" id="judgeLine" hidden></p>
+      <div class="jargon-chips" id="chips" aria-label="Words Pip will buzz on"></div>
+    </div>
+
+    <div class="card conversation reveal">
+      <div class="notice-err" id="micNote" hidden role="alert">
+        <svg aria-hidden="true"><use href="#i-alert"/></svg>
+        <span id="micText"></span>
+        <button class="link-btn" id="typeInstead" type="button">Type instead</button>
+      </div>
+      <div class="empty" id="logEmpty"><svg aria-hidden="true"><use href="#i-chat"/></svg><span>Pip is getting ready. Say hi, or type below.</span></div>
+      <ol class="log" id="log" aria-live="polite"></ol>
+      <p class="live-transcript" id="live"></p>
+      <p class="heard-note" id="heardNote" hidden>Pip heard the text below. Fix it and press Send.</p>
+      <form class="typed" id="typed"><input id="say" type="text" placeholder="No mic? Type what you'd say" aria-label="Type a turn" autocomplete="off"><button class="primary" type="submit">Send</button></form>
+      <div class="controls">
+        <button class="hold-btn" id="hold" type="button"><svg aria-hidden="true"><use href="#i-mic"/></svg>Hold to talk</button>
+        <button class="cut-btn" id="cut" type="button" title="Space also cuts in">Cut in <kbd>Space</kbd></button>
+        <button class="end-btn" id="end" type="button">End session</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Clarity Card -->
+  <section class="view clarity" id="clarity" hidden aria-labelledby="cardTitle">
+    <article class="card clarity-card">
+      <header class="clarity-head reveal">
+        <div><h2 id="cardTitle" class="view-title">Clarity Card</h2><p class="card-sub" id="cardSub"></p></div>
+        <p class="score"><span class="num" id="cardScore">0</span><small>/100</small></p>
+      </header>
+      <section class="reveal"><h3><svg class="ok" aria-hidden="true"><use href="#i-check"/></svg>What went well</h3><ul class="went-well" id="cardWell"></ul></section>
+      <section class="reveal"><h3><svg class="bad" aria-hidden="true"><use href="#i-alert"/></svg>Where it was vague or wrong</h3><ul class="vague-wrong" id="cardWeak"></ul></section>
+      <section class="reveal"><h3><svg aria-hidden="true"><use href="#i-chat"/></svg>Pop questions to retry later</h3><ol class="pop-questions" id="cardPops"></ol></section>
+      <button class="primary home-btn reveal" id="backHome" type="button">Back to home</button>
+    </article>
+  </section>
+</main>
+
+<dialog class="settings" id="settings" aria-labelledby="settingsTitle">
+  <form method="dialog" class="settings-form">
+    <div class="drawer-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings"><svg><use href="#i-x"/></svg></button></div>
+    <label>Provider <select id="provider"><option value="mock">Mock (no key)</option><option value="groq">Groq free (gpt-oss-20b)</option><option value="gemini">Gemini free (2.5 Flash-Lite)</option></select></label>
+    <label>Groq key <input id="groqKey" type="password" autocomplete="off" placeholder="gsk_..."></label>
+    <label>Gemini key <input id="geminiKey" type="password" autocomplete="off" placeholder="AIza..."></label>
+    <label class="check"><input id="headphones" type="checkbox"> Headphones: talk over Pip to cut in</label>
+    <label class="check"><input id="holdOnly" type="checkbox"> Noisy room: only listen while I hold the button</label>
+    <label class="check"><input id="mute" type="checkbox"> Mute Pip's voice (text only)</label>
+    <p class="settings-note">Keys stay in this browser (localStorage). They are only sent to the provider you pick.</p>
+    <button class="primary save-btn" value="save">Save</button>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
